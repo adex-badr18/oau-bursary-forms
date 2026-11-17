@@ -1,29 +1,68 @@
-# Implementation Plan: BFF Architecture, Mock Database, User Management & Multi-Stage Bursary Review Workflow
+# Implementation Plan: BFF Architecture, Mock Database, University Staff Directory & Bursary Form Processing Workflow
 
-## 1. Executive Summary & Architectural Vision
+## 1. Executive Summary & Revised Workflow Vision
 
-This implementation plan details the end-to-end architecture and execution roadmap for the **OAU Bursary Digital Form Submission & Processing System**. It incorporates a **Backend-For-Frontend (BFF)** architecture, an in-memory **Mock Database Layer with snapshot persistence**, an institutional **User Management System** with single & bulk Excel onboarding, a **Multi-Unit Bursary Review & Approval Workflow** with query loops and terminal locks, a **Site-wide Audit Log**, universal **Collapsible Sidebar Navigation**, and **Server-Side Data Tables** across all portals.
+This updated implementation plan aligns the **OAU Bursary Digital Form Submission & Processing System** with the updated operational workflow and institutional accounting structure established by the University Bursary Unit. 
+
+### Key Architectural Shifts & Core Policies:
+1. **Universal Staff Submission (No Fixed Representatives)**:
+   - Organizational units do not depend on designated single representatives.
+   - Any university staff member can be delegated by their department, faculty, directorate, division, or unit to complete and submit digital forms.
+2. **Comprehensive Staff Directory & Instant Prepopulation**:
+   - Complete university staff records are maintained centrally on the platform.
+   - When a staff member logs in or enters their institutional email (`username@oauife.edu.ng`), the system immediately fetches and prepopulates all their verified credentials (Title, Full Name, Staff ID, NIN, Phone, Designation, Salary Type, Grade Level, Step, and affiliated Organizational Unit).
+3. **Decoupled Fund Code & Centre Code (`01-694`)**:
+   - **Centre Code** (e.g. `694`) is an intrinsic attribute of the **Organizational Unit** (department, faculty, unit, directorate).
+   - **Fund Code** (e.g. `01` for Recurrent Vote, `02` for Capital Vote, `05` for Internally Generated Revenue/IGR) is applicable to the **Form / Funding Source**.
+   - Upon form completion, the system dynamically concatenates the applicable Fund Code and the unit's Centre Code into the institutional accounting format: `FundCode-CentreCode` (e.g. `01-694`).
+4. **Automated Print-Ready PDF & Universal Print Access**:
+   - Upon digital submission, the platform generates an official, print-formatted PDF containing all auto-populated staff information, concatenated Fund & Centre Codes (`01-694`), itemized request breakdowns, expense codes, barcodes/QR codes, and physical endorsement signature blocks.
+   - **Universal Print Functionality**: Printing and PDF download are accessible across **all** lifecycle interfaces:
+     1. Post-Submission Success Screen (`/department/forms/[type]/success`).
+     2. Submitting Staff / Department Details Page (`/department/submission/[id]`).
+     3. Bursary Officer Review Details Page (`/bursary/submission/[id]`).
+5. **Physical-to-Digital Processing Loop**:
+   - After online submission, the staff member prints the official form, signs it, and obtains the signature/stamp of their Head of Unit.
+   - The signed physical hard copy is delivered to the Bursary Unit.
+   - Bursary officers cross-reference the physical hard copy with the online submission using the reference number.
+6. **Streamlined 4-State Status Lifecycle**:
+   $$\text{Submitted} \longrightarrow \text{In Review} \longrightarrow \text{Approved} \;\text{OR}\; \text{Rejected}$$
+   - **`Submitted`**: Digital submission complete, PDF generated, awaiting physical delivery to Bursary.
+   - **`In Review`**: Physical hard copy received at Bursary; officer actively verifying credentials, vote balances, and attachments.
+   - **`Approved`**: Verified and approved. Officer enters optional approval notes and voucher/mandate allocation number.
+   - **`Rejected`**: Disallowed or returned. Officer enters a **mandatory explanatory note**. Rejected submissions cannot be edited; they require a fresh submission.
+7. **High-Performance Ingestion for ~4,000 Staff Records**:
+   - To accommodate the full university workforce (~4,000 staff members) without browser UI freezing or server timeout errors, a client-chunked ingestion pipeline with a real-time progress bar, pre-validation reporting, and server-side $O(1)$ indexed validation is implemented.
+8. **Triple Entity Single & Excel Bulk Management**:
+   - Both individual creation and bulk Excel (`.xlsx`/`.csv`) onboarding are provided for:
+     1. **University Staff Directory** (`~4,000` records).
+     2. **Organizational Units** (Faculties, Departments, Directorates, Units, Divisions).
+     3. **Expense Code Catalog** (Standard accounting classifications).
+9. **Site-Wide Superadmin Audit Log**:
+   - Every administrative, submission, review, and authentication event is immutably logged for governance.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                              RESPONSIVE PRESENTATION LAYER                             │
-│  Superadmin Portal         │  Representative Portal         │  Bursary Management      │
-│  - User Management         │  - Form Submission + Docs      │  - Multi-Unit Review     │
-│  - Excel Bulk Onboarding   │  - "Action Required!" Resubmit │  - Query / Resubmit Loop │
-│  - Site-Wide Audit Logs    │  - Server-Side Table & Timeline│  - Final Approval & Lock │
-│  - Collapsible Sidebar     │  - Collapsible Sidebar         │  - Terminate with Reason │
+│  Superadmin Portal         │  Staff / Unit Portal           │  Bursary Processing      │
+│  - Staff Mgmt (Single/Bulk)│  - Email Auto-population       │  - Queue & Review        │
+│  - Org Units (Single/Bulk) │  - Fund/Centre Code (01-694)   │  - Physical Cross-Check  │
+│  - Expense Codes (Bulk)    │  - Universal Print / PDF       │  - Approve/Reject + Note │
+│  - Site-Wide Audit Logs    │  - My Submissions Table        │  - Universal Print / PDF │
+│  - Collapsible Sidebar     │  - Collapsible Sidebar         │  - Collapsible Sidebar   │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            │ HTTP / JSON (Server-side Search, Filter, Page)
+                                            │ HTTP / JSON (Search, Filter, Pagination)
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
 │                       BFF LAYER (Next.js 15 App Route Handlers)                        │
-│   /api/auth/*    │    /api/users/*    │   /api/org-units/*   │   /api/submissions/*    │
-│   /api/audit-logs/* (Superadmin Only) │   /api/uploads/*     │   /api/notifications/*  │
+│   /api/auth/*     │   /api/staff/* (Chunked Ingestion)   │   /api/org-units/*          │
+│   /api/expense-codes/*     │   /api/submissions/*        │   /api/pdf/generate/*       │
+│   /api/fund-codes/*        │   /api/audit-logs/*                                       │
 │  - @oauife.edu.ng Validation - Role & Route Guards - Zod Validation - Audit Dispatcher │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
                                             │ Repository Interfaces
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
 │                            DATA ABSTRACTION LAYER                                      │
-│  IUserRepository  │  IOrgUnitRepository  │  ISubmissionRepository  │  IAuditLogRepository│
+│  IStaffRepository │  IOrgUnitRepository │  IExpenseRepository │  ISubmissionRepository │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │  [NOW] In-Memory Mock Store with JSON snapshot persistence (.data/mock-db.json)         │
 │  [LATER] PostgreSQL Adapter (Prisma / Drizzle / pg pool)                                │
@@ -34,388 +73,409 @@ This implementation plan details the end-to-end architecture and execution roadm
 
 ## 2. Core Entities & Data Modeling
 
-### 2.1 University Organizational Units (`OrgUnit`)
-Models all university entities eligible for a designated representative:
-- **`unitType`**: `'faculty' | 'department' | 'directorate' | 'unit' | 'division'`
+### 2.1 University Staff Directory (`StaffProfile` / `User`)
+To enable instantaneous auto-fill on all forms, the system maintains comprehensive records of all university staff:
+- **Institutional Email**: Primary identifier, strictly validated with regex `^[a-zA-Z0-9._%+-]+@oauife\.edu\.ng$`.
 - **Fields**:
-  - `id`: Unique string (e.g. `org-csc-dept`, `org-tech-faculty`, `org-dict-dir`, `org-works-div`)
+  - `id`: UUID
+  - `title`: `'Prof.' | 'Dr.' | 'Mr.' | 'Mrs.' | 'Ms.' | 'Engr.' | 'Pharm.' | 'Arch.'`
+  - `firstName`: string
+  - `lastName`: string
+  - `middleName?`: string
+  - `fullName`: string (computed)
+  - `staffId`: University Staff Payroll Number (e.g. `P.14205`)
+  - `email`: Institutional email (`username@oauife.edu.ng`)
+  - `phone`: Contact phone number (e.g. `08031234567`)
+  - `designation`: Post on payroll (e.g. `Senior Lecturer`, `Principal Executive Officer`)
+  - `nin`: National Identity Number (11 digits)
+  - `salaryType`: Salary structure (`CONTISS` | `CONUASS` | `CONMESS` | `CONPASS` | `CONTOPS` | `CONRAISS`)
+  - `salaryGrade`: Grade level (e.g. `CONTISS 08`, `CONUASS 05`)
+  - `salaryLevel`: Numeric/alphanumeric level
+  - `salaryStep`: Numeric step (e.g. `01` - `15`)
+  - `orgUnitId`: Foreign key to `OrgUnit`
+  - `role`: `'superadmin' | 'staff' | 'bursary'`
+  - `bursaryUnit?`: (if `role === 'bursary'`) e.g. `'Audit' | 'Expenditure' | 'Treasury' | 'Advances' | 'Final Accounts'`
+  - `status`: `'active' | 'inactive'`
+  - `mustChangePassword`: boolean (defaults to `true` on creation)
+  - `passwordHash`: Salted/hashed password string
+  - `createdAt`, `updatedAt`
+
+### 2.2 University Organizational Units (`OrgUnit`)
+Models all faculties, departments, directorates, divisions, and units across the institution:
+- **`unitType`**: `'faculty' | 'department' | 'directorate' | 'division' | 'unit'`
+- **Fields**:
+  - `id`: Unique string slug or UUID (e.g. `org-csc-dept`, `org-tech-fac`, `org-dict-dir`, `org-works-div`, `org-audit-unit`)
   - `name`: Full entity name (e.g. "Department of Computer Science and Engineering")
   - `code`: Short code (e.g. "CSC")
   - `type`: UnitType
-  - `parentUnitId`: Optional parent ID (e.g. Computer Science parent is Faculty of Technology)
-  - `currentRepresentativeId`: User ID of currently active representative
+  - `parentUnitId?`: Optional parent entity (e.g. Faculty of Technology for Department of Computer Science)
+  - `centreCode`: 3-digit Centre Code assigned to this organizational unit (e.g. `"694"`, `"210"`, `"105"`)
   - `status`: `'active' | 'inactive'`
   - `createdAt`, `updatedAt`
 
-### 2.2 User Hierarchy & Roles (`User`)
-- **Roles**:
-  1. `'superadmin'`: Full system control, representative onboarding, Bursary management configuration, site-wide audit log access, password resets.
-  2. `'representative'`: Designated official representing an organizational unit. Submits forms, uploads supporting documents, resolves "Action Required!" queries, and tracks review progress.
-  3. `'management'`: Bursary officers assigned to specific Bursary processing units (e.g. Internal Audit, Advances & Claims, Expenditure Control, Treasury, Final Accounts).
-- **Institutional Email Validation**:
-  - Enforced format: `^[a-zA-Z0-9._%+-]+@oauife\.edu\.ng$` (case-insensitive, verified in Zod schemas and server handlers).
+> [!IMPORTANT]
+> **Fund Code vs. Centre Code Separation**: The `centreCode` belongs directly to the `OrgUnit`. The `fundCode` is associated with the **Form / Funding Source** (e.g. Recurrent = `01`, Capital = `02`, Research Grant = `04`, IGR = `05`). When a staff member fills a form for their unit, the form's `fundCode` and unit's `centreCode` are dynamically concatenated to yield the combined institutional string `FundCode-CentreCode` (e.g. `01-694`).
+
+### 2.3 Fund Code Catalog (`FundCode`)
+Defines the standard university funding vote codes:
+- `id`: UUID
+- `code`: 2-digit Fund Code string (e.g. `"01"`, `"02"`, `"04"`, `"05"`, `"08"`)
+- `name`: Fund source name (e.g. `"Recurrent Expenditure Vote"`, `"Capital Development Fund"`, `"TETFund / Research Grants"`, `"Internally Generated Revenue (IGR)"`)
+- `description?`: Explanatory details for bursary classification
+- `isDefault`: boolean (e.g. `01` is default recurrent vote for operational advances)
+- `status`: `'active' | 'inactive'`
+
+### 2.4 Expense Code Catalog (`ExpenseCode`)
+Standardized accounting codes required on expenditure, purchase, and imprest forms:
+- `id`: UUID
+- `code`: Expense Code string (e.g. `"210101"`, `"210201"`, `"220101"`, `"220202"`, `"230101"`)
+- `description`: Formal accounting description (e.g. `"Local Transport & Travels - Others"`, `"Office Stationeries & Computer Supplies"`, `"Maintenance of Motor Vehicles"`, `"Research Grants & Field Work"`)
+- `category`: Classification group (e.g. `"Travel & Logistics"`, `"Supplies & Consumables"`, `"Repairs & Maintenance"`, `"Capital Project"`)
+- `status`: `'active' | 'inactive'`
+- `createdAt`, `updatedAt`
+
+### 2.5 Form Submissions (`FormSubmission`)
+Captures digital form data, auto-populated staff credentials, physical submission requirements, and review decisions:
+- **Lifecycle Statuses**:
+  - `'Submitted'`: Form submitted online, PDF generated, pending physical delivery to Bursary.
+  - `'In Review'`: Physical copy received at Bursary; bursary staff actively verifying credentials and claims.
+  - `'Approved'`: Submission approved by Bursary. Optional approval comment and voucher number allocated.
+  - `'Rejected'`: Submission disallowed/rejected. Mandatory failure reason provided. Requires fresh submission.
 - **Fields**:
   - `id`: UUID
-  - `name`: Full staff name
-  - `email`: Institutional email (`@oauife.edu.ng`)
-  - `phone`: Contact phone number
-  - `staffNumber`: University staff payroll / ID number
-  - `role`: `'superadmin' | 'representative' | 'management'`
-  - `orgUnitId`: Linked OrgUnit (for representatives)
-  - `bursaryUnit`: Specific Bursary unit (for management users)
-  - `status`: `'active' | 'deactivated'`
-  - `mustChangePassword`: Boolean flag (initially `true`)
-  - `passwordHash`: Salted/hashed password string
-  - `createdAt`, `updatedAt`, `deactivatedAt`, `deactivationReason`
+  - `referenceNumber`: Unique tracking code (e.g. `CA-2026-0042`)
+  - `formType`: `'cash-advance' | 'dlpo' | 'expenditure-authorization' | 'duty-mileage' | 'imprest-holder'`
+  - `submittedByStaffId`: Staff ID of person who filled the form
+  - `submittedByName`: Full name of delegated staff
+  - `submittedByEmail`: Institutional email
+  - `department`: Submitting unit name
+  - `departmentId`: Submitting unit ID
+  - `fundCode`: Form-specific Fund Code (e.g. `"01"`)
+  - `centreCode`: Submitting unit Centre Code (e.g. `"694"`)
+  - `formattedFundCentreCode`: Combined string: `"{fundCode}-{centreCode}"` (e.g. `"01-694"`)
+  - `staffSnapshot`: Frozen copy of staff details at submission time (NIN, salary type, grade, level, step, title, designation)
+  - `formData`: Form-specific payload (item descriptions, quantities, unit prices, total amounts, expense codes & descriptions)
+  - `supportingDocuments`: Array of `{ id, fileName, fileSize, fileType, fileUrl, uploadedAt }`
+  - `pdfUrl`: Path or data reference to generated PDF file
+  - `status`: `'Submitted' | 'In Review' | 'Approved' | 'Rejected'`
+  - `bursaryDecision`: `{ decision: 'Approved' | 'Rejected'; officerName: string; officerEmail: string; officerUnit: string; note: string; voucherNumber?: string; decidedAt: string }`
+  - `submittedDate`: ISO timestamp
+  - `processedDate?`: ISO timestamp
 
-### 2.3 Supporting Documents Model (`SupportingDocument`)
-All forms feature an optional multi-document attachment capability:
+### 2.6 Site-Wide Audit Log (`AuditLog`)
+Exclusively accessible to Superadmin for compliance and security auditing:
 - `id`: UUID
-- `fileName`: Original file name (e.g. `Invoice_Vendor_2026.pdf`)
-- `fileSize`: Number of bytes
-- `fileType`: MIME type (`application/pdf`, `image/png`, `image/jpeg`, etc.)
-- `fileUrl`: Mock/Storage URL or base64 preview
-- `uploadedAt`: ISO timestamp
-- `uploadedBy`: User ID
-
-### 2.4 Form Submissions & Review Workflow (`FormSubmission` & `ReviewComment`)
-- **Enhanced Status Lifecycle**:
-  ```
-  Submitted ➔ In Review ➔ Action Required! (Query Raised) ➔ Resubmitted (Updated) ➔ In Review ➔ Completed (Locked)
-                                                                                  └──> Terminated (Closed with Reason)
-  ```
-- **Statuses**:
-  - `'Submitted'`: Initial submission by representative.
-  - `'In Review'`: Being evaluated by one or more Bursary units.
-  - `'Action Required'`: A Bursary reviewer has queried the response, requesting additional details or supporting documents. The representative is notified and edit/upload capabilities are unlocked.
-  - `'Resubmitted'`: The representative has fulfilled the requested updates and resubmitted. Reviewers are notified.
-  - `'Completed'`: Final authorization granted, voucher/mandate allocated, and **the entire form response is permanently locked**.
-  - `'Terminated'`: Form response was rejected/disallowed with a **mandatory written explanation**. Cannot be updated; representative must submit a fresh application.
-- **Fields**:
-  - `id`, `referenceNumber`, `formType`, `applicantName`, `department`, `departmentId`, `submittedDate`
-  - `status`: `'Submitted' | 'In Review' | 'Action Required' | 'Resubmitted' | 'Completed' | 'Terminated'`
-  - `isLocked`: Boolean (true only when `status === 'Completed'`)
-  - `formData`: Record containing specific form fields
-  - `supportingDocuments`: Array of `SupportingDocument`
-  - `voucherNumber?`: Assigned upon completion
-  - `actionRequiredNotice?`: `{ requestedBy: string; unit: string; instructions: string; requestedAt: string }`
-  - `resubmissionNote?`: Note supplied by representative upon resolving queries
-  - `terminationReason?`: Mandatory explanation if terminated
-  - `completedAt?`, `completedBy?`, `terminatedAt?`, `terminatedBy?`
-
-### 2.5 Site-Wide Audit Log Model (`AuditLog`)
-Accessible **exclusively to Superadmin** to provide forensic traceability:
-- `id`: UUID
-- `actorId`: User ID who initiated the event
-- `actorName`: Full name of user
+- `actorId`: User ID
+- `actorName`: Full name
 - `actorEmail`: Institutional email (`@oauife.edu.ng`)
-- `actorRole`: Role of user (`superadmin` | `representative` | `management`)
-- `action`: Standardized event code, e.g.:
-  - `USER_LOGIN_SUCCESS`, `USER_LOGIN_FAILED`, `PASSWORD_CHANGED`, `PASSWORD_RESET_ADMIN`
-  - `REPRESENTATIVE_CREATED`, `REPRESENTATIVE_UPDATED`, `REPRESENTATIVE_DEACTIVATED`, `REPRESENTATIVE_REPLACED`
-  - `EXCEL_BULK_UPLOAD_COMPLETED`
-  - `FORM_SUBMITTED`, `FORM_ACTION_REQUIRED_FLAGGED`, `FORM_UPDATED_RESUBMITTED`
-  - `REVIEW_COMMENT_POSTED`, `FORM_APPROVED_LOCKED`, `FORM_TERMINATED`
-- `entityType`: `'user' | 'org_unit' | 'submission' | 'auth'`
-- `entityId`: Identifier of the target record
-- `details`: Human-readable description & structured metadata (before/after changes)
-- `ipAddress`: Request IP address
-- `userAgent`: Client browser/device
-- `timestamp`: ISO 8601 string
+- `actorRole`: `'superadmin' | 'staff' | 'bursary'`
+- `action`: Standardized event code:
+  - `STAFF_REGISTERED`, `STAFF_BULK_UPLOADED`, `STAFF_UPDATED`, `STAFF_PASSWORD_RESET`
+  - `ORG_UNIT_CREATED`, `ORG_UNIT_BULK_UPLOADED`, `ORG_UNIT_UPDATED`
+  - `EXPENSE_CODE_CREATED`, `EXPENSE_CODE_BULK_UPLOADED`, `EXPENSE_CODE_UPDATED`
+  - `FORM_SUBMITTED`, `FORM_PDF_PRINTED`, `FORM_STATUS_UPDATED`, `FORM_APPROVED`, `FORM_REJECTED`
+- `entityType`: `'staff' | 'org_unit' | 'expense_code' | 'fund_code' | 'submission' | 'auth'`
+- `entityId`: Target ID
+- `details`: Human-readable summary & structured before/after diff
+- `ipAddress`: Client IP
+- `timestamp`: ISO timestamp
 
 ---
 
-## 3. Institutional Authentication & Password Policies
+## 3. High-Volume Excel Bulk Ingestion Architecture (~4,000 Records)
 
-1. **Strict `@oauife.edu.ng` Domain Enforcement**:
-   - Both client-side Zod validation and server-side route handlers reject any non-institutional email.
-2. **First-Time Login Forced Password Change**:
-   - Accounts are created with an initial default password (`OAU-bursary2026!`) and `mustChangePassword: true`.
-   - On login, if `mustChangePassword === true`:
-     - User session is marked pending password update.
-     - Global route guard immediately redirects to `/change-password` and prevents access to any portal route.
-     - User must supply current password, new strong password (minimum 8 characters, uppercase, lowercase, number, symbol), and confirmation.
-     - Upon successful submission, `mustChangePassword` is set to `false`, an audit log is written, and user enters their portal.
-3. **Password Reset Capabilities**:
-   - **Superadmin One-Click Reset**: Superadmin can reset any user's password to default, setting `mustChangePassword: true` and dispatching an audit log.
-   - **Self-Service Reset Simulation**: User enters institutional email on `/forgot-password`, receives a simulated reset token, and completes reset via `/reset-password?token=...`.
-
----
-
-## 4. User Management: Single, Excel Bulk Onboarding & Redeployment
-
-### 4.1 Single Representative Registration
-- Path: `/admin/representatives/new`
-- Form fields:
-  - Unit Category (`Faculty`, `Department`, `Directorate`, `Unit`, `Division`)
-  - Target Unit Selector (filtered dynamically by category)
-  - Full Name, Staff Number, Phone Number, Institutional Email (`@oauife.edu.ng`), Official Designation
-- Assigns default password, marks `mustChangePassword: true`, binds unit, and logs `REPRESENTATIVE_CREATED`.
-
-### 4.2 Excel Bulk Onboarding (`xlsx`)
-- Path: `/admin/representatives/upload`
-- **Downloadable Sample Template**:
-  - Superadmin can download `OAU_Representatives_Template.xlsx` with strict headers:
-    `[Full Name, Staff Number, Phone Number, Institutional Email, Unit Type, Unit Name, Unit Code, Designation]`
-- **Upload & Interactive Validation**:
-  1. Superadmin uploads `.xlsx` or `.csv` file.
-  2. Server BFF (`POST /api/users/bulk-upload`) validates every row:
-     - Checks email syntax (`@oauife.edu.ng`).
-     - Detects duplicate emails in database and within the file.
-     - Matches or auto-creates organizational units.
-  3. Interactive Pre-Commit Table:
-     - Displays valid records (green checkmarks) vs invalid records (red badges with exact error messages).
-  4. Superadmin clicks "Commit Valid Records" to batch insert accounts and log `EXCEL_BULK_UPLOAD_COMPLETED`.
-
-### 4.3 Redeployment & Deactivation
-- In university administration, representatives get redeployed.
-- Superadmin actions:
-  - **Deactivate**: Sets status to `deactivated`, frees the organizational unit for a replacement, preserves past submissions linked to this representative.
-  - **Replace Representative**: Modal allowing the superadmin to designate the incoming representative, automatically deactivating the outgoing representative and transferring active unit jurisdiction while preserving historic audit trails.
-
----
-
-## 5. Multi-Unit Review, "Action Required!" Loop & Terminal Lock Workflow
+Managing ~4,000 university staff records requires specialized ingestion handling to eliminate client-side UI freezing, memory exhaustion, and server request timeouts.
 
 ```mermaid
 flowchart TD
-    A["Representative Submits Form\n(with optional Supporting Docs)"] --> B["Status: Submitted"]
-    B --> C["Bursary Unit Reviews\n(Audit, Advances, Expenditure, Treasury, etc.)"]
-    C --> D{"Review Decision"}
-    
-    D -->|"Query / Request More Info or Docs"| E["Status: Action Required!\n(Alert Badge at Representative Portal)"]
-    E --> F["Representative Updates Form Fields\n& Uploads Requested Documents"]
-    F --> G["Representative Resubmits\n(Status: Resubmitted)"]
-    G --> C
-    
-    D -->|"Fatal Non-Compliance"| H["Status: Terminated\n(Mandatory Reason Recorded)"]
-    H --> I["Form Permanently Closed\n(Requires Fresh Submission)"]
-    
-    D -->|"Final Approval Granted"| J["Status: Completed\n(Voucher Allocated)"]
-    J --> K["FORM PERMANENTLY LOCKED\n(Subsequent Mutations Rejected)"]
+    A[Superadmin selects 4,000-row Excel file] --> B[Client Web Worker / Async SheetJS Parser]
+    B --> C[Instant Client-Side Schema Check: Headers, Mandatory Fields]
+    C --> D[Display Ingestion Preview & Validation Summary]
+    D -->|Click 'Start Ingestion'| E[Chunk Records into Batches of 250 - 500 Rows]
+    E --> F[Send Batch 1 to /api/staff/bulk-upload/batch]
+    F --> G[Server $O(1)$ Set/Map Lookup against Existing DB]
+    G --> H[Batch Insert Valid Records & Append Audit Log]
+    H --> I[Return Batch Result: successCount, errors]
+    I --> J{More Batches?}
+    J -->|Yes| K[Update UI Progress Bar: 12.5% ... 25% ... 100%]
+    K --> E
+    J -->|No| L[Display Ingestion Report: 3,982 Added, 18 Skipped]
+    L --> M[Optionally Download Discrepancy / Error Excel Sheet]
 ```
 
-### 5.1 The "Action Required!" Query & Resubmit Loop
-1. When a Bursary unit reviewer requires corrections, additional details, or supplementary documentation:
-   - Reviewer clicks **"Request Action / Information"**.
-   - Reviewer specifies the exact instructions/query (e.g., "Please attach the signed departmental board approval and update the budget line item").
-   - Status changes to `'Action Required'`.
-   - Audit log and review comment are saved.
-2. Representative Portal:
-   - Submission displays a prominent yellow/amber alert badge: **"Action Required!"**.
-   - An "Update & Resubmit" drawer/mode opens, displaying reviewer instructions.
-   - Form inputs and the supporting document uploader become editable.
-   - Representative modifies fields, uploads additional documents, inputs a resubmission note, and clicks **"Submit Updates"**.
-   - Status transitions to `'Resubmitted'` (and back into the Bursary review queue).
-   - Bursary reviewers receive an in-app banner that updates have been supplied.
+### 3.1 Client-Side Non-Blocking Ingestion Pipeline
+1. **Async Parsing (Web Worker / Chunked Loop)**:
+   - File reading is performed off the main thread using an async reader or worker to avoid freezing the browser tab during binary decoding.
+2. **Pre-Ingestion Validation Matrix**:
+   - The UI parses the workbook and evaluates records against client rules:
+     - Institutional email matches `^[a-zA-Z0-9._%+-]+@oauife\.edu\.ng$`.
+     - Mandatory fields present: `staffId`, `firstName`, `lastName`, `email`, `nin`, `designation`, `salaryType`, `salaryGrade`.
+     - Check for in-file duplicates (duplicate emails or staff IDs within the Excel file itself).
+3. **Validation Summary Dashboard**:
+   - Before any record touches the database, the superadmin views a real-time summary card:
+     - **Total Rows Detected**: e.g. `4,012`
+     - **Ready for Import**: e.g. `3,995`
+     - **Invalid Rows (Format / Missing Fields)**: e.g. `12`
+     - **Internal Duplicates**: e.g. `5`
+   - A searchable preview table displays the parsed rows, with invalid rows highlighted in red with inline error tooltips.
+4. **Chunked Sequential Dispatch**:
+   - When the user clicks **"Commit Import"**, the client chunks the dataset into slices of 250 records.
+   - Dispatches batches sequentially via `POST /api/staff/bulk-upload/batch`.
+   - Renders a continuous animated progress bar (`Importing records 1,250 of 4,000 (31%)...`) with a graceful cancellation button.
+5. **Error Discrepancy Export**:
+   - Any rows rejected by the server or client validation can be exported directly into a downloadable Excel sheet: `OAU_Staff_Import_Errors.xlsx`, containing the original data plus an added `ErrorReason` column (e.g. *"Staff ID P.1102 already exists"* or *"Invalid email format: john@gmail.com"*).
 
-### 5.2 Termination (Permanent Failure)
-- If the form response cannot be processed, an officer selects **"Terminate Submission"**.
-- **Enforced Rule**: A detailed failure reason is **mandatory** (minimum 15 characters).
-- Form transitions to `'Terminated'` and is permanently closed.
-- The representative can view the detailed termination reason. **Terminated forms cannot be edited or resubmitted**; the representative must initiate a new, clean submission.
-
-### 5.3 Final Completion & Permanent Locking
-- Authorized Bursary officer enters voucher/payment mandate details and clicks **"Approve & Complete"**.
-- Status transitions to `'Completed'` and `isLocked = true`.
-- **Enforced Rule**: All subsequent edit, review, comment, or status mutation requests are rejected with HTTP 403 Forbidden.
-- The completed form displays a locked seal and is ready for native printing or PDF export.
-
----
-
-## 6. Optional Supporting Documents for All Forms
-
-Every department form includes an optional **Supporting Documents Upload Section**:
-- Forms:
-  1. Cash Advance Form
-  2. DLPO Form
-  3. Expenditure Authorization Form
-  4. Duty Mileage Claim Form
-  5. Imprest Holder Form
-- Component Features:
-  - Drag-and-drop file uploader accepting PDF, PNG, JPG, and DOCX files.
-  - File size validation (up to 10MB per file) and file type verification.
-  - Multi-file attachment with real-time list showing file name, formatted size, and remove button.
-  - Displayed prominently in submission details view with download/preview triggers.
-  - Re-accessible during the "Action Required!" loop to attach additional requested files.
+### 3.2 Server-Side High-Performance Processing
+1. **$O(1)$ Set & Map Indexing**:
+   - Rather than executing $N$ database lookups ($4,000 \times 2 = 8,000$ queries), the server loads existing `staffId` and `email` sets into an in-memory hash set once per transaction.
+   - Validation against existing records executes in $O(1)$ constant time per row.
+2. **Batched Repository Insertion**:
+   - The mock store / future database adapter performs a bulk array push or `prisma.staff.createMany()` in single transactions per chunk.
+3. **Comprehensive Audit Dispatch**:
+   - A single consolidated audit log entry is generated per bulk batch import (`STAFF_BULK_UPLOADED: Ingested batch 4 of 8 (250 records)`).
 
 ---
 
-## 7. Universal Collapsible Sidebar Navigation & Mobile Responsiveness
+## 4. Single & Bulk Onboarding for Org Units & Expense Codes
 
-A shared, accessible navigation component (`AppSidebar`) implemented across all portals:
-1. **Collapsible Desktop Mode**:
-   - Expandable / Collapsible toggle button.
-   - **Expanded**: Displays full portal branding, user profile card, section headings, navigation icons with text labels, and notification badges.
-   - **Collapsed**: Smooth transition to icon-only mini sidebar with floating tooltip hovers for optimal screen space utilization.
-   - State persisted in user preferences/cookies.
-2. **Mobile & Tablet Drawer**:
-   - Header with university seal and responsive hamburger menu.
-   - Smooth slide-out mobile drawer / sheet using Radix Sheet.
-   - Closes automatically upon route navigation.
-3. **Portal-Specific Menus**:
-   - **Superadmin Portal (`/admin/*`)**: Dashboard, Representatives, Organizational Units, Bursary Units, Site-Wide Audit Logs.
-   - **Representative Portal (`/department/*`)**: Available Forms, My Submissions, Submission Tracking.
-   - **Bursary Management Portal (`/bursary/*`)**: Overview Dashboard, Cash Advance, DLPO, Expenditure Auth, Duty Mileage, Imprest Holder, Review Queue.
+### 4.1 Organizational Units Management (`/admin/org-units`)
+- **Single Unit Creation**:
+  - Modal/Form fields: Name, Code (e.g. `CSC`), Unit Type (`faculty | department | directorate | division | unit`), Parent Unit selector, and **Centre Code** (e.g. `694`).
+- **Excel Bulk Upload (`/admin/org-units/upload`)**:
+  - Template: `OAU_Org_Units_Template.xlsx` (Columns: `Name`, `Code`, `Type`, `CentreCode`, `ParentUnitCode`).
+  - Validation preview table and batch commit.
 
----
-
-## 8. Server-Side Data Tables (Search, Filter, Pagination)
-
-To ensure performance with large datasets, **all tabular list views** utilize server-side query processing powered by TanStack Table and the BFF API:
-- Query Parameters:
-  `?page=1&limit=10&search=<term>&status=<status>&category=<category>&sortBy=<field>&sortOrder=<asc|desc>`
-- Standardized Paginated Response:
-  ```json
-  {
-    "data": [...],
-    "pagination": {
-      "page": 1,
-      "limit": 10,
-      "totalRecords": 142,
-      "totalPages": 15,
-      "hasNextPage": true,
-      "hasPrevPage": false
-    }
-  }
-  ```
-- Views Utilizing Server-Side Tables:
-  1. `/department/submissions`: Representative submissions list.
-  2. `/bursary/[category]`: Bursary submissions tables by form type and review queue.
-  3. `/admin/representatives`: Superadmin representative management table.
-  4. `/admin/org-units`: University organizational units directory.
-  5. `/admin/audit-logs`: Site-wide audit logs table.
+### 4.2 Expense Codes Catalog Management (`/admin/expense-codes`)
+- **Single Expense Code Creation**:
+  - Modal/Form fields: Code (e.g. `210101`), Accounting Description, Category (e.g. `Travel & Logistics`).
+- **Excel Bulk Upload (`/admin/expense-codes/upload`)**:
+  - Template: `OAU_Expense_Codes_Template.xlsx` (Columns: `Code`, `Description`, `Category`).
+  - Instant validation for duplicate code entries and batch commit.
 
 ---
 
-## 9. Site-Wide Audit Log (Superadmin Exclusive)
+## 5. Universal Print Functionality & PDF Generation Architecture
 
-- Path: `/admin/audit-logs`
-- Guarded: Accessible **only** to users with `role === 'superadmin'`.
-- UI Features:
-  - Metric cards: Total audit events, user logins today, security events, form lifecycle changes.
-  - Server-side filter bar:
-    - Search by actor name, email, or entity ID.
-    - Filter by Event Action (`USER_LOGIN`, `REPRESENTATIVE_REPLACED`, `FORM_TERMINATED`, etc.).
-    - Filter by Entity Type (`user`, `org_unit`, `submission`, `auth`).
-    - Date range picker.
-  - Detailed Audit Log Table:
-    - Timestamp, Actor (name + `@oauife.edu.ng`), Role badge, Action badge, Entity, IP Address.
-    - "View Details" modal showing structured before/after diffs and event metadata.
+The university process mandates physical hard copies signed by the staff member and Head of Unit. Print capability must therefore be seamless and omnipresent.
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                             UNIVERSAL PRINT & EXPORT MATRIX                            │
+├──────────────────────────────┬─────────────────────────────┬───────────────────────────┤
+│ 1. Post-Submission Screen    │ 2. Staff Details Page       │ 3. Bursary Review Page    │
+│    (/forms/[type]/success)   │    (/department/sub/[id])   │    (/bursary/sub/[id])    │
+├──────────────────────────────┼─────────────────────────────┼───────────────────────────┤
+│ - Immediate "Print Form" CTA │ - Persistent Print button   │ - Persistent Print button │
+│ - "Download PDF Copy"        │ - "Download Official PDF"   │ - "Download Official PDF" │
+│ - Physical submission guide  │ - Inspection of stamp boxes │ - Hard-copy verification  │
+└──────────────────────────────┴─────────────────────────────┴───────────────────────────┘
+```
+
+### 5.1 Official PDF Layout Specifications
+The generated PDF strictly adheres to official university stationery standards:
+1. **Header Block**:
+   - Official Obafemi Awolowo University Crest (high-resolution monochrome/duotone).
+   - "OBAFEMI AWOLOWO UNIVERSITY, ILE-IFE, NIGERIA"
+   - "BURSARY DEPARTMENT"
+   - Official Form Title (e.g. *"APPLICATION FOR CASH ADVANCE / IMPREST"*).
+2. **Document Control & Barcode**:
+   - Unique Reference Number (e.g. `CA-2026-0042`).
+   - Digital submission timestamp and generated Code128 / QR barcode for rapid counter scanning at Bursary.
+3. **Section A: Staff Particulars & Classification**:
+   - Full Name (with Title), Staff ID, Official Designation.
+   - National Identity Number (NIN), Contact Phone, Institutional Email.
+   - Salary Structure: Type (`CONTISS`/`CONUASS`), Grade Level, Step.
+   - Submitting Unit: Department / Faculty / Directorate.
+   - **Combined Accounting Code**: Formatted **`FundCode-CentreCode`** (e.g. **`01-694`**).
+4. **Section B: Request Details & Accounting Breakdown**:
+   - Purpose / Justification of Request.
+   - Itemized Schedule of Expenditure (Description, Quantity, Rate, Amount).
+   - Expense Code & Description allocation (e.g. `210101 - Local Transport & Travels`).
+   - Total Amount in figures ($\mathbf{N}$) and formal words (*"Two Hundred and Fifty Thousand Naira Only"*).
+5. **Section C: Formal Physical Endorsement Blocks**:
+   - **Box 1: Applicant Signature & Date**: Delegated staff signature line, date.
+   - **Box 2: Head of Unit Endorsement**: Name, Signature, Official Rubber Stamp, Date.
+   - **Box 3: Bursary Receiving & Internal Audit Stamp**: Physical receipt date, processing officer initial.
+   - **Box 4: Final Bursary Approval & Voucher Allocation**: Bursar / Deputy Bursar Signature, Approved Amount, Voucher Number, Cheque/Mandate Reference, Date.
+
+### 5.2 Print Execution Mechanisms
+- **Direct Browser Print (`window.print()`)**:
+  - Fully optimized `@media print` CSS stylesheet hiding navigation headers, sidebars, buttons, and footers.
+  - Formats the page into crisp, high-contrast black-and-white standard A4 paper dimensions with proper page margins.
+- **Server-Rendered Downloadable PDF (`GET /api/submissions/[id]/pdf`)**:
+  - Produces an immutable, standalone `.pdf` binary file suitable for offline archiving, emailing, or reprinting from any device.
 
 ---
 
-## 10. BFF API Route Specifications (Next.js App Router)
+## 6. Smart Prepopulation Engine & Dynamic Fund/Centre Code Binding
 
-| Method | Endpoint | Description | Role Guard |
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Staff as Delegated Staff
+    participant UI as Form Interface
+    participant BFF as Next.js BFF (/api)
+    participant DB as Mock DB Store
+
+    Staff->>UI: Selects Form & Enters Institutional Email
+    UI->>BFF: GET /api/staff/lookup?email=user@oauife.edu.ng
+    BFF->>DB: Query Staff & OrgUnit by Email
+    DB-->>BFF: Return Profile & Unit (Centre Code: 694)
+    Note over UI,BFF: Form Type dictates Fund Code (e.g. 01 for Recurrent)
+    UI->>UI: Dynamic Concatenation: FundCode(01) + CentreCode(694) = "01-694"
+    UI-->>Staff: Prepopulate Name, NIN, Salary, Dept, and "01-694"
+    Staff->>UI: Selects Expense Description from Autocomplete
+    UI->>UI: Auto-attaches Expense Code (e.g. 210101)
+    Staff->>UI: Uploads Supporting Documents (Optional)
+    Staff->>UI: Submits Form
+    UI->>BFF: POST /api/submissions
+    BFF->>DB: Persist Submission & Record Audit Log
+    BFF->>BFF: Generate Print-Ready PDF
+    BFF-->>UI: Return Reference (CA-2026-0042) & PDF URL
+    UI-->>Staff: Success Screen with "Print PDF Form" Action
+```
+
+---
+
+## 7. Universal Collapsible Navigation & Server-Side Data Tables
+
+### 7.1 Collapsible Sidebar (`AppSidebar`)
+Uniform collapsible navigation across all user roles:
+- **Desktop**: Expandable sidebar with logo, navigation links, badges, and user profile card. One-click toggle shrinks to a 64px compact icon-only rail with interactive hover tooltips.
+- **Mobile / Tablet**: Responsive slide-out sheet drawer triggered by hamburger button in the sticky top bar.
+- **Portal Navigation Routes**:
+  - **Superadmin (`/admin/*`)**:
+    - Dashboard (`/admin`)
+    - Staff Directory (`/admin/staff`) - Single register + 4,000-row chunked Excel upload
+    - Organizational Units (`/admin/org-units`) - Single create + Excel bulk upload
+    - Expense Codes (`/admin/expense-codes`) - Single create + Excel bulk upload
+    - Bursary Officers (`/admin/officers`)
+    - Site-Wide Audit Logs (`/admin/audit-logs`)
+  - **Staff / Department Portal (`/department/*`)**:
+    - Available Forms (`/department/forms`)
+    - My Submissions (`/department/submissions`)
+    - Submission Details & Print (`/department/submission/[id]`)
+  - **Bursary Portal (`/bursary/*`)**:
+    - Processing Queue (`/bursary/queue`)
+    - Approved Submissions (`/bursary/approved`)
+    - Rejected Submissions (`/bursary/rejected`)
+    - Submission Review, Print & Decision (`/bursary/submission/[id]`)
+
+### 7.2 Server-Side Data Tables
+Every tabular screen uses server-side querying:
+`GET /api/<resource>?page=1&limit=10&search=<term>&status=<status>&sortBy=<field>&sortOrder=<asc|desc>`
+- Fast in-memory / SQL pagination, case-insensitive search, and dynamic column sorting.
+
+---
+
+## 8. BFF API Route Specifications (Next.js App Router)
+
+| Method | Endpoint | Description | Guard |
 |---|---|---|---|
 | **Auth** | | | |
-| `POST` | `/api/auth/login` | Authenticate with institutional email & password | Public |
+| `POST` | `/api/auth/login` | Institutional email & password login | Public |
 | `POST` | `/api/auth/logout` | Invalidate session | Authenticated |
-| `GET` | `/api/auth/me` | Fetch active user profile & password status | Authenticated |
-| `POST` | `/api/auth/change-password`| Update password & set `mustChangePassword=false` | Authenticated |
-| `POST` | `/api/auth/reset-password` | Admin one-click reset or self-service reset | Superadmin / Self |
+| `GET` | `/api/auth/me` | Current user profile, role & password status | Authenticated |
+| `POST` | `/api/auth/change-password` | Update password & clear `mustChangePassword` | Authenticated |
+| `POST` | `/api/auth/reset-password` | Admin one-click reset for any staff member | Superadmin |
+| **Staff Directory** | | | |
+| `GET` | `/api/staff` | Server-side paginated list of staff members | Superadmin |
+| `POST` | `/api/staff` | Register single staff member | Superadmin |
+| `GET` | `/api/staff/lookup` | Look up staff & unit details by email | Authenticated |
+| `PATCH`| `/api/staff/[id]` | Update staff attributes, designation, or salary | Superadmin |
+| `POST` | `/api/staff/bulk-upload/validate` | Dry-run schema & duplicate check for Excel data | Superadmin |
+| `POST` | `/api/staff/bulk-upload/batch` | Ingest batch chunk (250-500 rows) with $O(1)$ check | Superadmin |
 | **Org Units** | | | |
-| `GET` | `/api/org-units` | Paginated/filtered university entities directory | Authenticated |
-| `POST` | `/api/org-units` | Create or modify organizational unit | Superadmin |
-| **Users** | | | |
-| `GET` | `/api/users` | Server-side paginated list of staff members | Superadmin / Management |
-| `POST` | `/api/users` | Register single representative / staff member | Superadmin |
-| `PATCH`| `/api/users/[id]` | Update representative details / deactivate | Superadmin |
-| `POST` | `/api/users/[id]/replace` | Reassign unit to new representative | Superadmin |
-| `POST` | `/api/users/bulk-upload` | Validate and batch-import Excel spreadsheet | Superadmin |
+| `GET` | `/api/org-units` | List units with Centre Codes | Authenticated |
+| `POST` | `/api/org-units` | Create single organizational unit | Superadmin |
+| `POST` | `/api/org-units/bulk-upload` | Batch-import organizational units via Excel | Superadmin |
+| **Fund Codes** | | | |
+| `GET` | `/api/fund-codes` | List available Fund Codes (01, 02, etc.) | Authenticated |
+| **Expense Codes** | | | |
+| `GET` | `/api/expense-codes` | Autocomplete / list of expense codes & descriptions | Authenticated |
+| `POST` | `/api/expense-codes` | Create single expense code entry | Superadmin |
+| `POST` | `/api/expense-codes/bulk-upload` | Batch-import expense codes via Excel | Superadmin |
 | **Submissions** | | | |
 | `GET` | `/api/submissions` | Server-side paginated & filtered submissions | Authenticated |
-| `POST` | `/api/submissions` | Create new submission with optional docs | Representative |
-| `GET` | `/api/submissions/[id]` | Full submission details, docs & review trail | Owner / Management |
-| `PATCH`| `/api/submissions/[id]` | Update submission & resolve "Action Required!" | Representative (Owner) |
-| `POST` | `/api/submissions/[id]/review` | Post review comment / query / transition | Management / Superadmin |
-| `POST` | `/api/submissions/[id]/request-action` | Flag "Action Required!" with instructions | Management / Superadmin |
-| `POST` | `/api/submissions/[id]/complete`| Mark completed, assign voucher & **lock** | Management / Superadmin |
-| `POST` | `/api/submissions/[id]/terminate`| Terminate submission with mandatory reason | Management / Superadmin |
+| `POST` | `/api/submissions` | Submit form, capture staff snapshot, bind `01-694`, generate PDF | Staff / Authenticated |
+| `GET` | `/api/submissions/[id]` | Full submission details, decision records, & PDF data | Owner / Bursary |
+| `POST` | `/api/submissions/[id]/approve` | Approve submission with optional note & voucher | Bursary / Superadmin |
+| `POST` | `/api/submissions/[id]/reject` | Reject submission with **mandatory reason note** | Bursary / Superadmin |
+| `GET` | `/api/submissions/[id]/pdf` | Download official print-ready PDF binary | Authenticated |
 | **Audit Logs** | | | |
 | `GET` | `/api/audit-logs` | Server-side paginated site-wide audit records | Superadmin Only |
 
 ---
 
-## 11. Mock Database & Repository Architecture
+## 9. Mock Database & Repository Architecture
 
-To facilitate clean transition to PostgreSQL:
 1. **Repository Interfaces** (`src/lib/server/db/interfaces/`):
-   - `IUserRepository`: `findById`, `findByEmail`, `listPaginated`, `create`, `update`, `replaceRepresentative`.
-   - `IOrgUnitRepository`: `list`, `findById`, `findByCode`, `create`, `update`.
-   - `ISubmissionRepository`: `listPaginated`, `findById`, `create`, `update`, `requestAction`, `resubmit`, `completeAndLock`, `terminate`.
+   - `IStaffRepository`: `listPaginated`, `findById`, `findByEmail`, `create`, `update`, `bulkCreateBatch`.
+   - `IOrgUnitRepository`: `list`, `findById`, `findByCode`, `create`, `update`, `bulkCreate`.
+   - `IFundCodeRepository`: `list`, `findByCode`.
+   - `IExpenseCodeRepository`: `list`, `findById`, `findByCode`, `search`, `create`, `update`, `bulkCreate`.
+   - `ISubmissionRepository`: `listPaginated`, `findById`, `create`, `approve`, `reject`.
    - `IAuditLogRepository`: `create`, `listPaginated`.
-2. **Mock Repository Implementation** (`src/lib/server/db/mock/`):
-   - In-memory data store singleton with realistic university seed data:
-     - 1 Superadmin: `admin@oauife.edu.ng`
-     - 5 Bursary Management Users (Internal Audit, Advances & Claims, Expenditure Control, Treasury, Final Accounts).
-     - 15 University Org Units across Faculties, Departments, Directorates, Units, and Divisions.
-     - 15 Designated Representatives with active links.
-     - Sample submissions spanning all lifecycle states (`Submitted`, `In Review`, `Action Required`, `Completed`, `Terminated`).
-     - Initial site-wide audit logs.
-   - Automatic local file snapshotting (`.data/mock-db.json`) ensuring test data survives development server restarts.
-3. **PostgreSQL Transition**:
-   - When PostgreSQL is ready, we swap the mock repositories with Prisma/Drizzle implementations matching the exact repository interfaces without altering BFF handlers or frontend components.
+2. **Mock Implementation with Seed Data** (`src/lib/server/db/mock/`):
+   - 1 Superadmin: `admin@oauife.edu.ng`
+   - 6 Bursary Officers across processing units (Audit, Expenditure, Advances, etc.).
+   - 25 University Org Units with designated 3-digit Centre Codes (`694`, `210`, `105`, etc.).
+   - 5 Standard University Fund Codes (`01` Recurrent, `02` Capital, `04` TETFund/Research, `05` IGR, `08` Special Grants).
+   - 35 Standard University Expense Codes with formal descriptions.
+   - 30 Pre-registered University Staff across diverse ranks with complete profiles and NINs.
+   - Local JSON snapshot persistence (`.data/mock-db.json`) ensuring modifications survive server restarts.
+3. **Seamless Future PostgreSQL Transition**:
+   - Zero UI or BFF route modifications required when replacing mock repositories with Prisma or Drizzle ORM implementations.
 
 ---
 
-## 12. Phased Implementation Roadmap
+## 10. Phased Implementation Roadmap
 
-### Phase 1: Core Foundation & Mock Database Layer
-- Install `xlsx` for Excel generation and parsing.
-- Define TypeScript definitions in `src/types/index.ts` (`OrgUnit`, `AuditLog`, `SupportingDocument`, updated `User`, `FormSubmission`, `ReviewComment`).
-- Implement repository interfaces and in-memory mock store with snapshot persistence.
+### Phase 1: Data Contracts, Schemas & Mock Database
+- Install `xlsx` (SheetJS) and PDF generation dependencies.
+- Update `src/types/index.ts` with updated models (`StaffProfile`, `OrgUnit` with `centreCode`, `FundCode`, `ExpenseCode`, `FormSubmission` with `fundCode`, `centreCode`, `formattedFundCentreCode`, `bursaryDecision`, `AuditLog`).
+- Build in-memory mock store with seed data and snapshot persistence (`.data/mock-db.json`).
 
 ### Phase 2: BFF Route Handlers (`src/app/api/...`)
-- Build `/api/auth/*` routes with `@oauife.edu.ng` validation and password enforcement.
-- Build `/api/users/*` routes including single registration and Excel bulk upload.
-- Build `/api/org-units` routes.
-- Build `/api/submissions/*` routes with server-side pagination, "Action Required!" loop, terminal locks, and document handling.
-- Build `/api/audit-logs` route with superadmin authorization guard.
+- Implement `/api/auth/*` routes with `@oauife.edu.ng` validation and password enforcement.
+- Implement `/api/staff/*` (lookup by email, single creation, and chunked batch upload).
+- Implement `/api/org-units/*` (single creation, Excel bulk upload, listing with Centre Codes).
+- Implement `/api/fund-codes` and `/api/expense-codes/*` (single create, Excel bulk upload, autocomplete search).
+- Implement `/api/submissions/*` (submission creation, approval with optional notes, rejection with mandatory reasons, PDF generation).
+- Implement `/api/audit-logs` (superadmin-only).
 
-### Phase 3: Layouts & Universal Collapsible Sidebar Navigation
-- Create shared `AppSidebar` supporting desktop expand/collapse and mobile drawer sheet.
-- Integrate collapsible sidebar into:
-  - Superadmin Portal (`/admin/layout.tsx`)
-  - Representative Portal (`/department/layout.tsx`)
-  - Bursary Management Portal (`/bursary/layout.tsx`)
+### Phase 3: Universal Collapsible Navigation & Layouts
+- Build responsive `AppSidebar` with expand/collapse toggle and mobile drawer.
+- Integrate into Superadmin (`/admin`), Staff (`/department`), and Bursary (`/bursary`) route groups.
 
-### Phase 4: Institutional Authentication & Password Enforcement UI
-- Update login page to validate `@oauife.edu.ng`.
-- Implement `/change-password` page and route guard for first-login password enforcement.
-- Implement `/forgot-password` and password reset triggers.
+### Phase 4: High-Performance Bulk Upload Portals (~4,000 Records)
+- Build Staff Directory Manager (`/admin/staff`) with single registration form and chunked Excel bulk upload wizard (progress bar, pre-validation summary, discrepancy error download).
+- Build Org Units Manager (`/admin/org-units`) with single form and Excel bulk upload.
+- Build Expense Codes Manager (`/admin/expense-codes`) with single form and Excel bulk upload.
+- Build Site-Wide Audit Log viewer (`/admin/audit-logs`).
 
-### Phase 5: Superadmin User Management & Audit Log UI
-- Build `/admin/dashboard` metrics view.
-- Build `/admin/representatives` server-side table with filters, search, and pagination.
-- Build single representative registration modal.
-- Build Excel bulk upload modal with drag-and-drop, template download, and preview table.
-- Build redeployment / replace representative dialog.
-- Build `/admin/audit-logs` site-wide audit viewer with filters and detail modal.
+### Phase 5: Smart Form Prepopulation & Dynamic `01-694` Binding
+- Update all 5 forms (Cash Advance, DLPO, Expenditure Auth, Duty Mileage, Imprest Holder):
+  - Email lookup triggering instant profile auto-fill (Name, Staff ID, NIN, Salary details, Department).
+  - Dynamic concatenation of form's Fund Code (e.g. `01`) and unit's Centre Code (e.g. `694`) to produce `01-694`.
+  - Expense Code searchable autocomplete selector.
+  - Multi-file supporting document drag-and-drop.
 
-### Phase 6: Form Enhancements & Supporting Documents Upload
-- Implement reusable `DocumentUploader` component with file preview and removal.
-- Add optional document upload section to all 5 department forms (Cash Advance, DLPO, Expenditure Auth, Duty Mileage, Imprest Holder).
-- Connect form submissions to BFF `POST /api/submissions`.
+### Phase 6: Universal Print Functionality & PDF Generation
+- Implement official university PDF template (crest, barcode, staff particulars, `FundCode-CentreCode`, request items, 4 physical signature blocks).
+- Implement print buttons and `@media print` styling on:
+  1. Submission confirmation screen (`/department/forms/[type]/success`).
+  2. Staff submission details page (`/department/submission/[id]`).
+  3. Bursary review details page (`/bursary/submission/[id]`).
 
-### Phase 7: Bursary Review Workflow & Terminal Lock UI
-- Update `/bursary/submission/[id]`:
-  - Review feed showing chronological audit history.
-  - "Request Action / Information" modal with instructions input.
-  - "Finalize & Lock" modal with voucher number input.
-  - "Terminate Submission" modal with mandatory failure reason.
-  - Complete lock indicators when `isLocked === true`.
+### Phase 7: Bursary Review Portal (Approved / Rejected Workflow)
+- Bursary queue table with server-side pagination, filters, and status tabs (`Submitted`, `In Review`, `Approved`, `Rejected`).
+- Bursary review detail page (`/bursary/submission/[id]`):
+  - Cross-check physical hard copy against digital details.
+  - Action modal: "Approve Submission" with optional note and voucher number.
+  - Action modal: "Reject Submission" with **mandatory rejection reason note**.
 
-### Phase 8: Representative Follow-up & "Action Required!" Resubmit UI
-- Update `/department/submissions` with server-side pagination, search, and status filters.
-- Update `/department/submission/[id]`:
-  - Display "Action Required!" alert banner with reviewer instructions.
-  - Enable edit/resubmission mode to update form fields and upload additional documents.
-  - Display terminal failure banner with explanation when terminated.
-  - Display locked completion banner with voucher details when completed.
-
-### Phase 9: Verification & Production Build
-- Run `pnpm tsc --noEmit` to ensure strict type compliance.
-- Run `pnpm build` to verify Next.js static and dynamic route compilation.
-- Verify all workflows: Excel bulk upload, first-login password change, "Action Required!" resubmit, final locking, termination with reason, and site-wide audit logs.
+### Phase 8: Verification & Quality Assurance
+- Run `pnpm tsc --noEmit` to verify type safety across all components and handlers.
+- Run `pnpm build` to verify route compilation and static page generation.
+- Test end-to-end workflows: Email auto-fill, `01-694` binding, PDF generation, print action on all 3 views, Bursary approval/rejection with notes, and 4,000-row chunked staff upload simulation.
