@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
 import {
   LayoutDashboard,
+  List,
   DollarSign,
   ShoppingCart,
   Receipt,
@@ -23,15 +24,14 @@ export default function BursaryDashboardLayout({
 }) {
   const { user, logout } = useAuth();
   const pathname = usePathname();
-  const router = useRouter();
 
-  const handleLogout = () => {
-    logout();
-    router.push('/');
+  const handleLogout = async () => {
+    await logout('/');
   };
 
   const navItems = [
     { path: '/bursary/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { path: '/bursary/submissions', label: 'All Submissions', icon: List },
     { path: '/bursary/cash-advance', label: 'Cash Advance', icon: DollarSign },
     { path: '/bursary/dlpo', label: 'DLPO', icon: ShoppingCart },
     { path: '/bursary/expenditure', label: 'Expenditure Auth', icon: Receipt },

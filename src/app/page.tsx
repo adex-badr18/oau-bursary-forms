@@ -53,6 +53,12 @@ export default function HomePage() {
             </CardContent>
           </Card>
         </div>
+
+        <div className="mt-8 text-center">
+          <Link href="/admin-login" className="inline-flex items-center text-sm font-medium text-indigo-700 hover:text-indigo-900 bg-white/70 hover:bg-white px-4 py-2 rounded-full border border-indigo-200 shadow-sm transition-all">
+            Superadmin Access Portal &rarr;
+          </Link>
+        </div>
       </div>
     </main>
   );

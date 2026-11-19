@@ -31,25 +31,28 @@ This updated implementation plan aligns the **OAU Bursary Digital Form Submissio
    - **`In Review`**: Physical hard copy received at Bursary; officer actively verifying credentials, vote balances, and attachments.
    - **`Approved`**: Verified and approved. Officer enters optional approval notes and voucher/mandate allocation number.
    - **`Rejected`**: Disallowed or returned. Officer enters a **mandatory explanatory note**. Rejected submissions cannot be edited; they require a fresh submission.
-7. **High-Performance Ingestion for ~4,000 Staff Records**:
+7. **Single Unified Submissions Route for Bursary Portal**:
+   - All submissions (regardless of status: Submitted, In Review, Approved, Rejected) are accessed via a single route: `/bursary/submissions`.
+   - Features robust server-side search (by reference number, staff name, staff ID, department), filtering (status tabs/dropdown, form type, date range), and pagination.
+8. **High-Performance Ingestion for ~4,000 Staff Records**:
    - To accommodate the full university workforce (~4,000 staff members) without browser UI freezing or server timeout errors, a client-chunked ingestion pipeline with a real-time progress bar, pre-validation reporting, and server-side $O(1)$ indexed validation is implemented.
-8. **Triple Entity Single & Excel Bulk Management**:
+9. **Triple Entity Single & Excel Bulk Management**:
    - Both individual creation and bulk Excel (`.xlsx`/`.csv`) onboarding are provided for:
      1. **University Staff Directory** (`~4,000` records).
      2. **Organizational Units** (Faculties, Departments, Directorates, Units, Divisions).
      3. **Expense Code Catalog** (Standard accounting classifications).
-9. **Site-Wide Superadmin Audit Log**:
+10. **Site-Wide Superadmin Audit Log**:
    - Every administrative, submission, review, and authentication event is immutably logged for governance.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                              RESPONSIVE PRESENTATION LAYER                             │
 │  Superadmin Portal         │  Staff / Unit Portal           │  Bursary Processing      │
-│  - Staff Mgmt (Single/Bulk)│  - Email Auto-population       │  - Queue & Review        │
-│  - Org Units (Single/Bulk) │  - Fund/Centre Code (01-694)   │  - Physical Cross-Check  │
-│  - Expense Codes (Bulk)    │  - Universal Print / PDF       │  - Approve/Reject + Note │
-│  - Site-Wide Audit Logs    │  - My Submissions Table        │  - Universal Print / PDF │
-│  - Collapsible Sidebar     │  - Collapsible Sidebar         │  - Collapsible Sidebar   │
+│  - Staff Mgmt (Single/Bulk)│  - Email Auto-population       │  - All Submissions Route │
+│  - Org Units (Single/Bulk) │  - Fund/Centre Code (01-694)   │  - Server Search, Filter │
+│  - Expense Codes (Bulk)    │  - Universal Print / PDF       │  - Physical Cross-Check  │
+│  - Site-Wide Audit Logs    │  - My Submissions Table        │  - Approve/Reject + Note │
+│  - Collapsible Sidebar     │  - Collapsible Sidebar         │  - Universal Print / PDF │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
                                             │ HTTP / JSON (Search, Filter, Pagination)
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
@@ -356,9 +359,7 @@ Uniform collapsible navigation across all user roles:
     - My Submissions (`/department/submissions`)
     - Submission Details & Print (`/department/submission/[id]`)
   - **Bursary Portal (`/bursary/*`)**:
-    - Processing Queue (`/bursary/queue`)
-    - Approved Submissions (`/bursary/approved`)
-    - Rejected Submissions (`/bursary/rejected`)
+    - All Submissions (`/bursary/submissions`) - Single unified route for all submissions (Submitted, In Review, Approved, Rejected) with server-side search, status filters, and pagination
     - Submission Review, Print & Decision (`/bursary/submission/[id]`)
 
 ### 7.2 Server-Side Data Tables
@@ -396,7 +397,7 @@ Every tabular screen uses server-side querying:
 | `POST` | `/api/expense-codes` | Create single expense code entry | Superadmin |
 | `POST` | `/api/expense-codes/bulk-upload` | Batch-import expense codes via Excel | Superadmin |
 | **Submissions** | | | |
-| `GET` | `/api/submissions` | Server-side paginated & filtered submissions | Authenticated |
+| `GET` | `/api/submissions` | Server-side paginated & filtered submissions (supports status, search, unit, form type) | Authenticated |
 | `POST` | `/api/submissions` | Submit form, capture staff snapshot, bind `01-694`, generate PDF | Staff / Authenticated |
 | `GET` | `/api/submissions/[id]` | Full submission details, decision records, & PDF data | Owner / Bursary |
 | `POST` | `/api/submissions/[id]/approve` | Approve submission with optional note & voucher | Bursary / Superadmin |
@@ -468,14 +469,22 @@ Every tabular screen uses server-side querying:
   2. Staff submission details page (`/department/submission/[id]`).
   3. Bursary review details page (`/bursary/submission/[id]`).
 
-### Phase 7: Bursary Review Portal (Approved / Rejected Workflow)
-- Bursary queue table with server-side pagination, filters, and status tabs (`Submitted`, `In Review`, `Approved`, `Rejected`).
+### Phase 7: Bursary Review Portal (Single Unified Submissions Route & Review Workflow)
+- Build a single unified submissions route (`/bursary/submissions`) displaying all submissions across all statuses (`Submitted`, `In Review`, `Approved`, `Rejected`), featuring server-side search (by reference number, staff name, staff ID, department), filtering (by status tabs/dropdown, form type, date), and pagination.
 - Bursary review detail page (`/bursary/submission/[id]`):
   - Cross-check physical hard copy against digital details.
   - Action modal: "Approve Submission" with optional note and voucher number.
   - Action modal: "Reject Submission" with **mandatory rejection reason note**.
+  - Persistent Print & Download PDF buttons.
 
-### Phase 8: Verification & Quality Assurance
-- Run `pnpm tsc --noEmit` to verify type safety across all components and handlers.
-- Run `pnpm build` to verify route compilation and static page generation.
-- Test end-to-end workflows: Email auto-fill, `01-694` binding, PDF generation, print action on all 3 views, Bursary approval/rejection with notes, and 4,000-row chunked staff upload simulation.
+### Phase 8: Verification & Quality Assurance (Completed)
+- `pnpm tsc --noEmit` verified with 0 errors.
+- `pnpm build` verified with all 43 routes compiling cleanly.
+
+### Phase 9: Session Navigation & Logout Hardening (Completed)
+- **Problem**: Superadmin logout caused the UI to stay stuck on an infinite spinning loader instead of navigating to the homepage or login page, while dev server logged successful `POST /api/auth/logout 200` and `GET / 200`.
+- **Root Cause**: `ProtectedRoute` rendered an uninformative loading spinner as soon as `session` became `null`, while conflicting concurrent client router transitions (`router.replace('/')` in `ProtectedRoute` and `router.push('/')` in the layout's logout handler) raced against Next.js 15 App Router server-side page compilation.
+- **Resolution**:
+  1. Updated `AuthContext.tsx`: `logout(redirectTo = '/')` performs a top-level `window.location.replace(redirectTo)`, ensuring clean cache clearing, reliable unmounting, and immediate navigation without race conditions.
+  2. Hardened `ProtectedRoute.tsx`: Added `redirectedRef` to guard against duplicate redirect dispatching, switched to `window.location.replace()` with contextual login destinations (`/admin-login`, `/bursary-login`, `/department-login`), and added descriptive progress feedback text (`"Redirecting..."` / `"Verifying session..."`).
+  3. Cleaned `handleLogout` across all layouts (`AdminLayout`, `BursaryDashboardLayout`, `DepartmentDashboardLayout`) to await `logout('/')` directly.

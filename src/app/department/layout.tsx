@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
@@ -14,11 +14,9 @@ export default function DepartmentDashboardLayout({
 }) {
   const { user, logout } = useAuth();
   const pathname = usePathname();
-  const router = useRouter();
 
-  const handleLogout = () => {
-    logout();
-    router.push('/');
+  const handleLogout = async () => {
+    await logout('/');
   };
 
   const navItems = [
